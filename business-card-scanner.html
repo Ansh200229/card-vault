@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CardVault — AI Business Card Scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ─── RESET & VARIABLES ─────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #111118;
+    --glass:     rgba(255,255,255,0.04);
+    --glass-border: rgba(255,255,255,0.09);
+    --accent:    #c8a96e;
+    --accent2:   #e8c98e;
+    --accent-dim:#8a6f3e;
+    --red:       #e05c5c;
+    --green:     #5ce0a0;
+    --blue:      #5c9ee0;
+    --text:      #f0ede8;
+    --muted:     #7a7870;
+    --border:    rgba(255,255,255,0.07);
+    --shadow:    0 24px 64px rgba(0,0,0,0.6);
+    --r:         14px;
+    --r-sm:      8px;
+    --font-display: 'Playfair Display', Georgia, serif;
+    --font-body:    'DM Sans', sans-serif;
+    --font-mono:    'DM Mono', monospace;
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ─── NOISE OVERLAY ─────────────────────────────────────────── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+    opacity: 0.025;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ─── AMBIENT GLOW ──────────────────────────────────────────── */
+  .ambient {
+    position: fixed; pointer-events: none; z-index: 0;
+    border-radius: 50%; filter: blur(120px); opacity: 0.12;
+  }
+  .ambient-1 { width: 600px; height: 600px; background: #c8a96e; top: -200px; right: -100px; }
+  .ambient-2 { width: 500px; height: 500px; background: #5c9ee0; bottom: -100px; left: -150px; }
+
+  /* ─── LAYOUT ────────────────────────────────────────────────── */
+  .app { position: relative; z-index: 1; max-width: 1380px; margin: 0 auto; padding: 32px 24px 80px; }
+
+  /* ─── HEADER ────────────────────────────────────────────────── */
+  .hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 0 40px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 40px;
+    animation: fadeDown 0.6s ease both;
+  }
+  .hdr-brand { display: flex; align-items: baseline; gap: 12px; }
+  .hdr-brand h1 {
+    font-family: var(--font-display);
+    font-size: 2rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    letter-spacing: -0.02em;
+  }
+  .hdr-tag {
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 3px 10px; border-radius: 20px;
+  }
+  .stat-pill {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--glass); border: 1px solid var(--glass-border);
+    padding: 10px 20px; border-radius: 30px;
+    font-size: 0.85rem; font-weight: 500; color: var(--text);
+    backdrop-filter: blur(12px);
+  }
+  .stat-pill .dot {
+    width: 8px; height: 8px; background: var(--green);
+    border-radius: 50%; box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s ease infinite;
+  }
+  #totalCount { font-family: var(--font-mono); font-weight: 500; color: var(--accent); }
+
+  /* ─── MAIN GRID ─────────────────────────────────────────────── */
+  .grid {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+  @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+
+  /* ─── GLASS PANELS ──────────────────────────────────────────── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 28px;
+    animation: fadeUp 0.5s ease both;
+    position: relative; overflow: hidden;
+  }
+  .panel::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(200,169,110,0.3), transparent);
+  }
+  .panel-title {
+    font-family: var(--font-display);
+    font-size: 1.1rem; font-weight: 600;
+    color: var(--text);
+    margin-bottom: 24px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .panel-title .icon {
+    width: 34px; height: 34px;
+    background: linear-gradient(135deg, rgba(200,169,110,0.2), rgba(200,169,110,0.05));
+    border: 1px solid rgba(200,169,110,0.25);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.95rem;
+  }
+
+  /* ─── UPLOAD ZONE ───────────────────────────────────────────── */
+  .upload-zone {
+    border: 1.5px dashed rgba(200,169,110,0.3);
+    border-radius: var(--r);
+    height: 200px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 10px; cursor: pointer;
+    transition: all 0.3s ease;
+    background: rgba(200,169,110,0.02);
+    position: relative; overflow: hidden;
+    margin-bottom: 18px;
+  }
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(200,169,110,0.06);
+    transform: scale(1.01);
+  }
+  .upload-zone .uz-icon { font-size: 2.5rem; opacity: 0.5; }
+  .upload-zone .uz-text { font-size: 0.85rem; color: var(--muted); text-align: center; line-height: 1.5; }
+  .upload-zone .uz-text strong { color: var(--accent); }
+  .upload-zone img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    border-radius: var(--r);
+    padding: 8px;
+  }
+  .upload-zone .uz-overlay {
+    position: absolute; inset: 0;
+    background: rgba(10,10,15,0.5);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity 0.2s;
+    border-radius: var(--r);
+  }
+  .upload-zone:hover .uz-overlay { opacity: 1; }
+  .upload-zone .uz-overlay span {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 8px 16px; border-radius: 20px; font-size: 0.8rem;
+    color: var(--text);
+  }
+
+  /* ─── BUTTON ROW ────────────────────────────────────────────── */
+  .btn-row { display: flex; gap: 10px; margin-bottom: 18px; }
+  .btn {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    padding: 10px 16px; border: none; border-radius: var(--r-sm);
+    font-family: var(--font-body); font-size: 0.82rem; font-weight: 600;
+    cursor: pointer; transition: all 0.2s ease;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    flex: 1;
+  }
+  .btn-gold {
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    color: #1a1408;
+  }
+  .btn-gold:hover { filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 8px 24px rgba(200,169,110,0.3); }
+  .btn-ghost {
+    background: var(--glass); border: 1px solid var(--glass-border);
+    color: var(--text); backdrop-filter: blur(8px);
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; filter: none !important; }
+  .btn-full { flex: none; width: 100%; }
+
+  /* ─── AI SCAN BUTTON ────────────────────────────────────────── */
+  #scanBtn {
+    width: 100%; padding: 14px;
+    background: linear-gradient(135deg, rgba(200,169,110,0.15), rgba(200,169,110,0.05));
+    border: 1px solid rgba(200,169,110,0.4);
+    color: var(--accent2);
+    font-size: 0.9rem; font-weight: 600;
+    margin-bottom: 20px;
+    position: relative; overflow: hidden;
+  }
+  #scanBtn::after {
+    content: '';
+    position: absolute; top: 0; left: -100%;
+    width: 60%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(200,169,110,0.15), transparent);
+    transition: left 0.5s;
+  }
+  #scanBtn:not(:disabled):hover::after { left: 150%; }
+  #scanBtn:not(:disabled):hover {
+    background: linear-gradient(135deg, rgba(200,169,110,0.25), rgba(200,169,110,0.1));
+    box-shadow: 0 0 24px rgba(200,169,110,0.2);
+  }
+
+  /* ─── AI RESULT ─────────────────────────────────────────────── */
+  .ai-result {
+    background: rgba(200,169,110,0.05);
+    border: 1px solid rgba(200,169,110,0.2);
+    border-radius: var(--r-sm);
+    padding: 16px;
+    margin-bottom: 20px;
+    display: none;
+    animation: fadeUp 0.3s ease both;
+  }
+  .ai-result-hdr {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+  }
+  .ai-result-title { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+  .ai-fill-btn {
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent);
+    background: rgba(200,169,110,0.12); border: 1px solid rgba(200,169,110,0.3);
+    padding: 4px 12px; border-radius: 20px; cursor: pointer;
+    transition: all 0.2s;
+  }
+  .ai-fill-btn:hover { background: rgba(200,169,110,0.2); }
+  #extractedText {
+    font-family: var(--font-mono); font-size: 0.76rem;
+    color: var(--muted); line-height: 1.7;
+    max-height: 140px; overflow-y: auto;
+    white-space: pre-wrap;
+  }
+
+  /* ─── DIVIDER ───────────────────────────────────────────────── */
+  .divider {
+    height: 1px; background: var(--border);
+    margin: 24px 0; position: relative;
+  }
+  .divider::after {
+    content: attr(data-label);
+    position: absolute; top: -9px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    padding: 0 12px;
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--muted);
+  }
+
+  /* ─── FORM ──────────────────────────────────────────────────── */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group.span-2 { grid-column: span 2; }
+  .form-group label {
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .form-group label .lbl-icon { opacity: 0.7; }
+  .form-group input, .form-group textarea {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 10px 13px;
+    font-family: var(--font-body); font-size: 0.875rem; color: var(--text);
+    outline: none; transition: all 0.2s;
+    resize: vertical;
+  }
+  .form-group input::placeholder, .form-group textarea::placeholder { color: rgba(255,255,255,0.2); }
+  .form-group input:focus, .form-group textarea:focus {
+    border-color: rgba(200,169,110,0.5);
+    background: rgba(200,169,110,0.04);
+    box-shadow: 0 0 0 3px rgba(200,169,110,0.08);
+  }
+  .form-group textarea { min-height: 72px; }
+
+  .save-row { display: flex; gap: 10px; margin-top: 22px; }
+
+  /* ─── SEARCH BAR ────────────────────────────────────────────── */
+  .search-wrap { position: relative; margin-bottom: 20px; }
+  .search-wrap input {
+    width: 100%; padding: 12px 16px 12px 44px;
+    background: var(--glass); border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    font-family: var(--font-body); font-size: 0.875rem; color: var(--text);
+    outline: none; transition: all 0.2s;
+  }
+  .search-wrap input::placeholder { color: var(--muted); }
+  .search-wrap input:focus {
+    border-color: rgba(200,169,110,0.4);
+    background: rgba(200,169,110,0.03);
+    box-shadow: 0 0 0 3px rgba(200,169,110,0.06);
+  }
+  .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); opacity: 0.4; font-size: 1rem; pointer-events: none; }
+
+  /* ─── VAULT TABS ────────────────────────────────────────────── */
+  .vault-tabs { display: flex; gap: 4px; margin-bottom: 20px; background: var(--glass); padding: 4px; border-radius: var(--r-sm); border: 1px solid var(--border); }
+  .vtab {
+    flex: 1; padding: 7px 12px;
+    background: none; border: none; cursor: pointer;
+    font-family: var(--font-body); font-size: 0.78rem; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); border-radius: 6px;
+    transition: all 0.2s;
+  }
+  .vtab.active { background: var(--surface); color: var(--accent); }
+
+  /* ─── CARDS LIST ────────────────────────────────────────────── */
+  .cards-list { max-height: 680px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+  .cards-list::-webkit-scrollbar { width: 4px; }
+  .cards-list::-webkit-scrollbar-track { background: transparent; }
+  .cards-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* ─── CARD ITEM ─────────────────────────────────────────────── */
+  .card-item {
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    overflow: hidden;
+    transition: all 0.25s ease;
+    animation: fadeUp 0.4s ease both;
+    cursor: pointer;
+  }
+  .card-item:hover {
+    border-color: rgba(200,169,110,0.3);
+    background: rgba(200,169,110,0.03);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.3);
+  }
+  .card-inner { display: flex; gap: 0; }
+  .card-thumb {
+    width: 120px; flex-shrink: 0;
+    background: rgba(200,169,110,0.06);
+    display: flex; align-items: center; justify-content: center;
+    border-right: 1px solid var(--border);
+    overflow: hidden; position: relative;
+  }
+  .card-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .card-thumb .no-img { font-size: 2rem; opacity: 0.2; }
+  .card-body { flex: 1; padding: 16px 18px; }
+  .card-company { font-family: var(--font-display); font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+  .card-person { font-size: 0.82rem; color: var(--muted); margin-bottom: 10px; }
+  .card-person em { color: var(--accent); font-style: normal; }
+  .card-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .meta-chip {
+    font-size: 0.72rem; color: var(--muted);
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+    padding: 3px 9px; border-radius: 20px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .card-footer {
+    padding: 10px 18px;
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    background: rgba(0,0,0,0.1);
+  }
+  .card-date { font-family: var(--font-mono); font-size: 0.68rem; color: var(--muted); }
+  .card-actions { display: flex; gap: 6px; }
+  .act-btn {
+    width: 28px; height: 28px;
+    border-radius: 6px; border: 1px solid var(--border);
+    background: var(--glass); cursor: pointer;
+    font-size: 0.8rem;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s; color: var(--muted);
+  }
+  .act-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .act-btn.del:hover { border-color: var(--red); color: var(--red); }
+
+  /* ─── EMPTY STATE ───────────────────────────────────────────── */
+  .empty-state {
+    text-align: center; padding: 60px 20px; color: var(--muted);
+  }
+  .empty-state .es-icon { font-size: 3rem; opacity: 0.2; margin-bottom: 16px; }
+  .empty-state h3 { font-family: var(--font-display); font-size: 1.2rem; color: rgba(255,255,255,0.3); margin-bottom: 8px; }
+  .empty-state p { font-size: 0.82rem; }
+
+  /* ─── MODAL ─────────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 900;
+    background: rgba(0,0,0,0.75); backdrop-filter: blur(8px);
+    display: none; align-items: center; justify-content: center;
+    padding: 20px;
+    animation: fadeIn 0.2s ease;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r);
+    width: 100%; max-width: 520px;
+    max-height: 90vh; overflow-y: auto;
+    padding: 32px;
+    animation: scaleIn 0.2s ease both;
+    position: relative;
+  }
+  .modal::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(200,169,110,0.4), transparent);
+  }
+  .modal-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+  .modal-title { font-family: var(--font-display); font-size: 1.3rem; font-weight: 600; }
+  .modal-close {
+    width: 32px; height: 32px; background: var(--glass); border: 1px solid var(--border);
+    border-radius: 6px; cursor: pointer; font-size: 1.1rem; color: var(--muted);
+    display: flex; align-items: center; justify-content: center; transition: all 0.2s;
+  }
+  .modal-close:hover { border-color: var(--red); color: var(--red); }
+
+  /* ─── CAMERA MODAL ──────────────────────────────────────────── */
+  #cameraView {
+    width: 100%; max-height: 360px; border-radius: var(--r-sm);
+    object-fit: cover; background: #000;
+  }
+
+  /* ─── VIEW MODAL (expanded card) ───────────────────────────── */
+  .view-card-img {
+    width: 100%; max-height: 200px; object-fit: contain;
+    border-radius: var(--r-sm); margin-bottom: 20px;
+    background: rgba(200,169,110,0.04);
+    border: 1px solid var(--border);
+    display: none;
+  }
+  .view-fields { display: flex; flex-direction: column; gap: 12px; }
+  .view-field { display: flex; gap: 14px; align-items: flex-start; }
+  .view-field-icon { width: 36px; height: 36px; flex-shrink: 0; background: rgba(200,169,110,0.08); border: 1px solid rgba(200,169,110,0.15); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; }
+  .view-field-body { flex: 1; }
+  .view-field-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+  .view-field-value { font-size: 0.9rem; color: var(--text); word-break: break-all; }
+  .view-field-value a { color: var(--accent); text-decoration: none; }
+  .view-field-value a:hover { text-decoration: underline; }
+
+  /* ─── TOAST ─────────────────────────────────────────────────── */
+  #toast {
+    position: fixed; bottom: 32px; right: 32px; z-index: 9999;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 14px 20px;
+    font-size: 0.85rem; font-weight: 500;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: var(--shadow);
+    transform: translateY(80px); opacity: 0;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    pointer-events: none;
+    max-width: 320px;
+  }
+  #toast.show { transform: translateY(0); opacity: 1; }
+  #toast .t-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  #toast.t-success .t-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  #toast.t-error .t-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  #toast.t-info .t-dot { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+  #toast.t-warn .t-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  /* ─── LOADING SPINNER ───────────────────────────────────────── */
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid rgba(200,169,110,0.3);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
+  }
+
+  /* ─── STATS ROW ─────────────────────────────────────────────── */
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .stat-card {
+    background: var(--glass); border: 1px solid var(--border);
+    border-radius: var(--r-sm); padding: 14px 16px;
+    text-align: center;
+  }
+  .stat-card .s-val { font-family: var(--font-mono); font-size: 1.5rem; font-weight: 500; color: var(--accent); }
+  .stat-card .s-lbl { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+
+  /* ─── ANIMATIONS ────────────────────────────────────────────── */
+  @keyframes fadeDown  { from { opacity:0; transform:translateY(-16px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes fadeUp    { from { opacity:0; transform:translateY(16px); }  to { opacity:1; transform:translateY(0); } }
+  @keyframes fadeIn    { from { opacity:0; } to { opacity:1; } }
+  @keyframes scaleIn   { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
+  @keyframes spin      { to { transform:rotate(360deg); } }
+  @keyframes pulse     { 0%,100%{box-shadow:0 0 6px var(--green);} 50%{box-shadow:0 0 14px var(--green);} }
+
+  /* ─── SCROLLBAR ─────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div class="ambient ambient-1"></div>
+<div class="ambient ambient-2"></div>
+
+<div class="app">
+
+  <!-- HEADER -->
+  <header class="hdr">
+    <div class="hdr-brand">
+      <h1>CardVault</h1>
+      <span class="hdr-tag">AI Scanner</span>
+    </div>
+    <div class="stat-pill">
+      <span class="dot"></span>
+      <span id="totalCount">0</span>&nbsp;cards stored
+    </div>
+  </header>
+
+  <!-- MAIN GRID -->
+  <div class="grid">
+
+    <!-- LEFT: SCANNER PANEL -->
+    <div class="panel" style="animation-delay:0.1s">
+      <div class="panel-title">
+        <span class="icon">✦</span>
+        Scan a Business Card
+      </div>
+
+      <!-- Upload Zone -->
+      <div class="upload-zone" id="uploadZone"
+           onclick="triggerUpload()"
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event)">
+        <div class="uz-icon">⬡</div>
+        <div class="uz-text">
+          <strong>Drop image here</strong> or click to browse<br>
+          Camera · PNG · JPG · WEBP
+        </div>
+        <img id="previewImg" style="display:none;">
+        <div class="uz-overlay" id="uploadOverlay"><span>Change image</span></div>
+      </div>
+      <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleFileChange(event)">
+
+      <!-- Controls -->
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="openCamera()">📷 Camera</button>
+        <button class="btn btn-ghost" onclick="triggerUpload()">⬆ Upload</button>
+        <button class="btn btn-ghost" onclick="clearAll()">✕ Clear</button>
+      </div>
+
+      <!-- Scan Button -->
+      <button class="btn btn-gold btn-full" id="scanBtn" disabled onclick="scanCard()">
+        ✦ Scan with AI
+      </button>
+
+      <!-- AI Result -->
+      <div class="ai-result" id="aiResult">
+        <div class="ai-result-hdr">
+          <span class="ai-result-title">✦ AI Extracted</span>
+          <button class="ai-fill-btn" onclick="autoFill()">Auto-fill form →</button>
+        </div>
+        <div id="extractedText"></div>
+      </div>
+
+      <div class="divider" data-label="Card Details"></div>
+
+      <!-- Form -->
+      <div class="form-grid">
+        <div class="form-group span-2">
+          <label><span class="lbl-icon">🏢</span> Company</label>
+          <input type="text" id="fCompany" placeholder="Company name">
+        </div>
+        <div class="form-group">
+          <label><span class="lbl-icon">👤</span> Name</label>
+          <input type="text" id="fName" placeholder="Full name">
+        </div>
+        <div class="form-group">
+          <label><span class="lbl-icon">💼</span> Title</label>
+          <input type="text" id="fTitle" placeholder="Job title">
+        </div>
+        <div class="form-group">
+          <label><span class="lbl-icon">✉</span> Email</label>
+          <input type="email" id="fEmail" placeholder="email@domain.com">
+        </div>
+        <div class="form-group">
+          <label><span class="lbl-icon">📞</span> Phone</label>
+          <input type="tel" id="fPhone" placeholder="+1 (555) 000-0000">
+        </div>
+        <div class="form-group span-2">
+          <label><span class="lbl-icon">🌐</span> Website</label>
+          <input type="text" id="fWebsite" placeholder="www.company.com">
+        </div>
+        <div class="form-group span-2">
+          <label><span class="lbl-icon">📍</span> Address</label>
+          <textarea id="fAddress" placeholder="Street, City, Country"></textarea>
+        </div>
+      </div>
+
+      <div class="save-row">
+        <button class="btn btn-gold" style="flex:2;" onclick="saveCard()">✓ Save to Vault</button>
+        <button class="btn btn-ghost" style="flex:1;" onclick="clearForm()">Clear</button>
+      </div>
+    </div>
+
+    <!-- RIGHT: VAULT PANEL -->
+    <div class="panel" style="animation-delay:0.2s">
+      <div class="panel-title">
+        <span class="icon">◈</span>
+        Card Vault
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card"><div class="s-val" id="sTotal">0</div><div class="s-lbl">Total</div></div>
+        <div class="stat-card"><div class="s-val" id="sWithImg">0</div><div class="s-lbl">With Image</div></div>
+        <div class="stat-card"><div class="s-val" id="sToday">0</div><div class="s-lbl">Today</div></div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="vault-tabs">
+        <button class="vtab active" onclick="setTab('all',this)">All Cards</button>
+        <button class="vtab" onclick="setTab('today',this)">Today</button>
+        <button class="vtab" onclick="setTab('img',this)">With Image</button>
+      </div>
+
+      <!-- Search -->
+      <div class="search-wrap">
+        <span class="search-icon">⌕</span>
+        <input type="text" id="searchInput" placeholder="Search by name, company, email…" oninput="renderCards()">
+      </div>
+
+      <!-- List -->
+      <div class="cards-list" id="cardsList"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- CAMERA MODAL -->
+<div class="modal-backdrop" id="cameraModal">
+  <div class="modal" style="max-width:600px;">
+    <div class="modal-hdr">
+      <span class="modal-title">Camera Capture</span>
+      <button class="modal-close" onclick="closeCamera()">✕</button>
+    </div>
+    <video id="cameraView" autoplay playsinline muted></video>
+    <div style="margin-top:16px; display:flex; gap:10px;">
+      <button class="btn btn-gold" style="flex:1;" onclick="capturePhoto()">📸 Capture</button>
+      <button class="btn btn-ghost" style="flex:1;" onclick="closeCamera()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT MODAL -->
+<div class="modal-backdrop" id="editModal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <span class="modal-title">Edit Card</span>
+      <button class="modal-close" onclick="closeEdit()">✕</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-group span-2">
+        <label>Company</label>
+        <input type="text" id="eCompany">
+      </div>
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" id="eName">
+      </div>
+      <div class="form-group">
+        <label>Title</label>
+        <input type="text" id="eTitle">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="eEmail">
+      </div>
+      <div class="form-group">
+        <label>Phone</label>
+        <input type="tel" id="ePhone">
+      </div>
+      <div class="form-group span-2">
+        <label>Website</label>
+        <input type="text" id="eWebsite">
+      </div>
+      <div class="form-group span-2">
+        <label>Address</label>
+        <textarea id="eAddress"></textarea>
+      </div>
+    </div>
+    <div class="save-row">
+      <button class="btn btn-gold" style="flex:2;" onclick="commitEdit()">Save Changes</button>
+      <button class="btn btn-ghost" style="flex:1;" onclick="closeEdit()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- VIEW MODAL -->
+<div class="modal-backdrop" id="viewModal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <span class="modal-title" id="viewTitle">Card Details</span>
+      <button class="modal-close" onclick="closeView()">✕</button>
+    </div>
+    <img id="viewImg" class="view-card-img">
+    <div class="view-fields" id="viewFields"></div>
+    <div class="save-row" style="margin-top:20px;">
+      <button class="btn btn-ghost btn-full" onclick="closeView()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"><span class="t-dot"></span><span id="toastMsg"></span></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+let cards = [];
+let currentImageData = null;
+let aiData = null;
+let cameraStream = null;
+let editIdx = -1;
+let currentTab = 'all';
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  loadCards();
+  renderCards();
+  updateStats();
+  toast('CardVault ready', 'success');
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  STORAGE
+// ═══════════════════════════════════════════════════════════════
+function loadCards() {
+  try { cards = JSON.parse(localStorage.getItem('cv_cards') || '[]'); } catch { cards = []; }
+}
+function persist() {
+  try { localStorage.setItem('cv_cards', JSON.stringify(cards)); } catch { toast('Storage error', 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  IMAGE HANDLING
+// ═══════════════════════════════════════════════════════════════
+function triggerUpload() { document.getElementById('fileInput').click(); }
+
+function handleFileChange(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { toast('Please select an image', 'error'); return; }
+  readFile(file);
+}
+
+function readFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => setImage(e.target.result);
+  reader.readAsDataURL(file);
+}
+
+function setImage(dataUrl) {
+  currentImageData = dataUrl;
+  const img = document.getElementById('previewImg');
+  const zone = document.getElementById('uploadZone');
+  img.src = dataUrl;
+  img.style.display = 'block';
+  zone.querySelector('.uz-icon').style.display = 'none';
+  zone.querySelector('.uz-text').style.display = 'none';
+  document.getElementById('uploadOverlay').style.display = 'flex';
+  document.getElementById('scanBtn').disabled = false;
+  toast('Image loaded — ready to scan', 'info');
+}
+
+function clearImage() {
+  currentImageData = null;
+  const img = document.getElementById('previewImg');
+  img.src = ''; img.style.display = 'none';
+  document.getElementById('uploadZone').querySelector('.uz-icon').style.display = '';
+  document.getElementById('uploadZone').querySelector('.uz-text').style.display = '';
+  document.getElementById('uploadOverlay').style.display = 'none';
+  document.getElementById('scanBtn').disabled = true;
+  document.getElementById('aiResult').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+}
+
+function handleDragOver(e) { e.preventDefault(); document.getElementById('uploadZone').classList.add('drag-over'); }
+function handleDragLeave()  { document.getElementById('uploadZone').classList.remove('drag-over'); }
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('uploadZone').classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) readFile(file);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CAMERA
+// ═══════════════════════════════════════════════════════════════
+async function openCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) { toast('Camera not supported', 'error'); return; }
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    document.getElementById('cameraView').srcObject = cameraStream;
+    document.getElementById('cameraModal').classList.add('open');
+  } catch(e) {
+    toast('Camera access denied', 'error');
+  }
+}
+function capturePhoto() {
+  const v = document.getElementById('cameraView');
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  setImage(c.toDataURL('image/jpeg', 0.9));
+  closeCamera();
+}
+function closeCamera() {
+  cameraStream?.getTracks().forEach(t => t.stop());
+  cameraStream = null;
+  document.getElementById('cameraModal').classList.remove('open');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AI SCAN (Claude API)
+// ═══════════════════════════════════════════════════════════════
+async function scanCard() {
+  if (!currentImageData) { toast('No image loaded', 'error'); return; }
+
+  const btn = document.getElementById('scanBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Scanning…';
+
+  // Strip data URL prefix to get raw base64
+  const base64 = currentImageData.split(',')[1];
+  const mimeMatch = currentImageData.match(/data:(image\/[^;]+)/);
+  const mediaType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
+  const systemPrompt = `You are a business card data extractor. 
+Extract ALL text and data from the business card image.
+Return a JSON object with ONLY these keys (use empty string if not found):
+{
+  "company": "",
+  "name": "",
+  "title": "",
+  "email": "",
+  "phone": "",
+  "website": "",
+  "address": "",
+  "raw": ""
+}
+"raw" should contain all text verbatim from the card.
+Return ONLY valid JSON, no markdown, no explanation.`;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: systemPrompt,
+        messages: [{
+          role: 'user',
+          content: [{
+            type: 'image',
+            source: { type: 'base64', media_type: mediaType, data: base64 }
+          }, {
+            type: 'text',
+            text: 'Extract all business card information as JSON.'
+          }]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const text = data.content?.find(b => b.type === 'text')?.text || '';
+    let parsed;
+    try {
+      const clean = text.replace(/```json|```/g, '').trim();
+      parsed = JSON.parse(clean);
+    } catch {
+      parsed = { raw: text };
+    }
+
+    aiData = parsed;
+
+    // Show extracted text
+    document.getElementById('extractedText').textContent = parsed.raw || JSON.stringify(parsed, null, 2);
+    document.getElementById('aiResult').style.display = 'block';
+
+    // Auto-fill immediately
+    autoFill();
+    toast('AI extraction complete ✦', 'success');
+
+  } catch(err) {
+    console.error(err);
+    toast('AI scan failed — fill form manually', 'warn');
+    document.getElementById('extractedText').textContent = 'Could not extract data. Please fill the form manually.';
+    document.getElementById('aiResult').style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '✦ Scan with AI';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTO-FILL
+// ═══════════════════════════════════════════════════════════════
+function autoFill() {
+  if (!aiData) { toast('No AI data yet', 'warn'); return; }
+  const set = (id, val) => { if (val) document.getElementById(id).value = val; };
+  set('fCompany', aiData.company);
+  set('fName',    aiData.name);
+  set('fTitle',   aiData.title);
+  set('fEmail',   aiData.email);
+  set('fPhone',   aiData.phone);
+  set('fWebsite', aiData.website);
+  set('fAddress', aiData.address);
+  toast('Form filled automatically', 'info');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SAVE / CLEAR
+// ═══════════════════════════════════════════════════════════════
+function saveCard() {
+  const company = document.getElementById('fCompany').value.trim();
+  const name    = document.getElementById('fName').value.trim();
+  if (!company && !name) { toast('Enter at least a company or name', 'error'); return; }
+
+  const card = {
+    id:        Date.now(),
+    company:   company,
+    name:      name,
+    title:     document.getElementById('fTitle').value.trim(),
+    email:     document.getElementById('fEmail').value.trim(),
+    phone:     document.getElementById('fPhone').value.trim(),
+    website:   document.getElementById('fWebsite').value.trim(),
+    address:   document.getElementById('fAddress').value.trim(),
+    imageData: currentImageData,
+    createdAt: new Date().toISOString()
+  };
+
+  cards.unshift(card);
+  persist();
+  renderCards();
+  updateStats();
+  clearForm();
+  clearImage();
+  toast('Card saved to vault ✦', 'success');
+}
+
+function clearForm() {
+  ['fCompany','fName','fTitle','fEmail','fPhone','fWebsite','fAddress']
+    .forEach(id => document.getElementById(id).value = '');
+  aiData = null;
+}
+
+function clearAll() {
+  clearForm();
+  clearImage();
+  aiData = null;
+  document.getElementById('aiResult').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  EDIT
+// ═══════════════════════════════════════════════════════════════
+function openEdit(idx) {
+  editIdx = idx;
+  const c = cards[idx];
+  const set = (id, val) => document.getElementById(id).value = val || '';
+  set('eCompany', c.company); set('eName', c.name);
+  set('eTitle',   c.title);   set('eEmail', c.email);
+  set('ePhone',   c.phone);   set('eWebsite', c.website);
+  set('eAddress', c.address);
+  document.getElementById('editModal').classList.add('open');
+}
+function commitEdit() {
+  if (editIdx < 0) return;
+  const c = cards[editIdx];
+  const get = id => document.getElementById(id).value.trim();
+  c.company = get('eCompany'); c.name    = get('eName');
+  c.title   = get('eTitle');   c.email   = get('eEmail');
+  c.phone   = get('ePhone');   c.website = get('eWebsite');
+  c.address = get('eAddress');
+  persist(); renderCards(); updateStats();
+  closeEdit();
+  toast('Card updated', 'success');
+}
+function closeEdit() {
+  document.getElementById('editModal').classList.remove('open');
+  editIdx = -1;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DELETE
+// ═══════════════════════════════════════════════════════════════
+function deleteCard(idx, e) {
+  e?.stopPropagation();
+  if (!confirm('Delete this card?')) return;
+  cards.splice(idx, 1);
+  persist(); renderCards(); updateStats();
+  toast('Card removed', 'info');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  VIEW
+// ═══════════════════════════════════════════════════════════════
+function openView(idx) {
+  const c = cards[idx];
+  document.getElementById('viewTitle').textContent = c.company || c.name || 'Card Details';
+
+  const img = document.getElementById('viewImg');
+  if (c.imageData) { img.src = c.imageData; img.style.display = 'block'; }
+  else img.style.display = 'none';
+
+  const fields = [
+    { icon: '🏢', label: 'Company',  val: c.company },
+    { icon: '👤', label: 'Name',     val: c.name },
+    { icon: '💼', label: 'Title',    val: c.title },
+    { icon: '✉',  label: 'Email',    val: c.email, link: `mailto:${c.email}` },
+    { icon: '📞', label: 'Phone',    val: c.phone, link: `tel:${c.phone}` },
+    { icon: '🌐', label: 'Website',  val: c.website, link: c.website?.startsWith('http') ? c.website : `https://${c.website}` },
+    { icon: '📍', label: 'Address',  val: c.address },
+  ].filter(f => f.val);
+
+  document.getElementById('viewFields').innerHTML = fields.map(f => `
+    <div class="view-field">
+      <div class="view-field-icon">${f.icon}</div>
+      <div class="view-field-body">
+        <div class="view-field-label">${f.label}</div>
+        <div class="view-field-value">${f.link ? `<a href="${f.link}" target="_blank">${f.val}</a>` : f.val}</div>
+      </div>
+    </div>
+  `).join('');
+
+  document.getElementById('viewModal').classList.add('open');
+}
+function closeView() { document.getElementById('viewModal').classList.remove('open'); }
+
+// ═══════════════════════════════════════════════════════════════
+//  TABS & FILTER
+// ═══════════════════════════════════════════════════════════════
+function setTab(tab, el) {
+  currentTab = tab;
+  document.querySelectorAll('.vtab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  renderCards();
+}
+
+function getFilteredCards() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  const today = new Date().toDateString();
+
+  return cards.filter(c => {
+    // Tab filter
+    if (currentTab === 'today') {
+      if (new Date(c.createdAt).toDateString() !== today) return false;
+    }
+    if (currentTab === 'img' && !c.imageData) return false;
+
+    // Search filter
+    if (!q) return true;
+    return [c.company, c.name, c.title, c.email, c.phone, c.website, c.address]
+      .some(v => v?.toLowerCase().includes(q));
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER CARDS
+// ═══════════════════════════════════════════════════════════════
+function renderCards() {
+  const list = document.getElementById('cardsList');
+  const filtered = getFilteredCards();
+
+  document.getElementById('totalCount').textContent = cards.length;
+
+  if (filtered.length === 0) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="es-icon">◈</div>
+        <h3>${cards.length === 0 ? 'Vault is empty' : 'No matches'}</h3>
+        <p>${cards.length === 0 ? 'Scan your first business card' : 'Try a different search'}</p>
+      </div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map((c, i) => {
+    const realIdx = cards.indexOf(c);
+    const date = new Date(c.createdAt);
+    const ds = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    const chips = [
+      c.email && `<span class="meta-chip">✉ ${c.email}</span>`,
+      c.phone && `<span class="meta-chip">📞 ${c.phone}</span>`,
+      c.website && `<span class="meta-chip">🌐 ${c.website}</span>`,
+    ].filter(Boolean).join('');
+
+    return `
+    <div class="card-item" onclick="openView(${realIdx})" style="animation-delay:${i * 0.04}s">
+      <div class="card-inner">
+        <div class="card-thumb">
+          ${c.imageData
+            ? `<img src="${c.imageData}" alt="card">`
+            : `<span class="no-img">◈</span>`}
+        </div>
+        <div class="card-body">
+          <div class="card-company">${c.company || '—'}</div>
+          <div class="card-person">${c.name || ''}${c.name && c.title ? ' · ' : ''}<em>${c.title || ''}</em></div>
+          <div class="card-meta">${chips}</div>
+        </div>
+      </div>
+      <div class="card-footer">
+        <span class="card-date">${ds}</span>
+        <div class="card-actions" onclick="event.stopPropagation()">
+          <button class="act-btn" onclick="openEdit(${realIdx})" title="Edit">✎</button>
+          <button class="act-btn del" onclick="deleteCard(${realIdx},event)" title="Delete">✕</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  STATS
+// ═══════════════════════════════════════════════════════════════
+function updateStats() {
+  const today = new Date().toDateString();
+  document.getElementById('sTotal').textContent   = cards.length;
+  document.getElementById('sWithImg').textContent = cards.filter(c => c.imageData).length;
+  document.getElementById('sToday').textContent   = cards.filter(c => new Date(c.createdAt).toDateString() === today).length;
+  document.getElementById('totalCount').textContent = cards.length;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOAST
+// ═══════════════════════════════════════════════════════════════
+let toastTimer;
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  const types = { success:'t-success', error:'t-error', info:'t-info', warn:'t-warn' };
+  el.className = types[type] || 't-info';
+  document.getElementById('toastMsg').textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CLICK OUTSIDE MODAL
+// ═══════════════════════════════════════════════════════════════
+['cameraModal','editModal','viewModal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', function(e) {
+    if (e.target === this) {
+      if (id === 'cameraModal') closeCamera();
+      else if (id === 'editModal') closeEdit();
+      else closeView();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  CLEANUP
+// ═══════════════════════════════════════════════════════════════
+window.addEventListener('beforeunload', () => cameraStream?.getTracks().forEach(t => t.stop()));
+</script>
+</body>
+</html>
