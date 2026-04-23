@@ -843,82 +843,111 @@ async function scanCard() {
   if (!currentImageData) { toast('No image loaded', 'error'); return; }
 
   const btn = document.getElementById('scanBtn');
+  const resultBox = document.getElementById('aiResult');
+  const textBox   = document.getElementById('extractedText');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Scanning…';
+  resultBox.style.display = 'none';
 
-  // Strip data URL prefix to get raw base64
+  // Strip data URL prefix → raw base64 + MIME
   const base64 = currentImageData.split(',')[1];
   const mimeMatch = currentImageData.match(/data:(image\/[^;]+)/);
-  const mediaType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const mediaType = (mimeMatch ? mimeMatch[1] : 'image/jpeg');
+  // Anthropic only accepts: image/jpeg, image/png, image/gif, image/webp
+  const allowedMimes = ['image/jpeg','image/png','image/gif','image/webp'];
+  const safeMime = allowedMimes.includes(mediaType) ? mediaType : 'image/jpeg';
 
-  const systemPrompt = `You are a business card data extractor. 
-Extract ALL text and data from the business card image.
-Return a JSON object with ONLY these keys (use empty string if not found):
-{
-  "company": "",
-  "name": "",
-  "title": "",
-  "email": "",
-  "phone": "",
-  "website": "",
-  "address": "",
-  "raw": ""
-}
-"raw" should contain all text verbatim from the card.
-Return ONLY valid JSON, no markdown, no explanation.`;
+  const systemPrompt = `You are a business card OCR and data extractor.
+Look at the business card image carefully and extract every piece of text.
+Respond with ONLY a raw JSON object — no markdown fences, no explanation, nothing else.
+Use exactly these keys (value = empty string if not found):
+{"company":"","name":"","title":"","email":"","phone":"","website":"","address":"","raw":""}
+"raw" = all visible text on the card verbatim, newline-separated.`;
 
+  let rawBody;
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    rawBody = JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      system: systemPrompt,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: safeMime, data: base64 } },
+          { type: 'text',  text: 'Extract the business card data as JSON.' }
+        ]
+      }]
+    });
+  } catch(serErr) {
+    showError('Failed to serialize request: ' + serErr.message);
+    return;
+  }
+
+  let response, data;
+  try {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true'
       },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: [{
-          role: 'user',
-          content: [{
-            type: 'image',
-            source: { type: 'base64', media_type: mediaType, data: base64 }
-          }, {
-            type: 'text',
-            text: 'Extract all business card information as JSON.'
-          }]
-        }]
-      })
+      body: rawBody
     });
+  } catch(netErr) {
+    showError('Network error — cannot reach Anthropic API.\n' + netErr.message);
+    return;
+  }
 
-    const data = await response.json();
-    if (data.error) throw new Error(data.error.message);
+  try {
+    data = await response.json();
+  } catch(parseErr) {
+    showError('HTTP ' + response.status + ' — could not parse response body.\n' + parseErr.message);
+    return;
+  }
 
-    const text = data.content?.find(b => b.type === 'text')?.text || '';
-    let parsed;
-    try {
-      const clean = text.replace(/```json|```/g, '').trim();
-      parsed = JSON.parse(clean);
-    } catch {
-      parsed = { raw: text };
-    }
+  // Surface API-level errors clearly
+  if (!response.ok || data.error) {
+    const errType = data.error?.type || 'unknown_error';
+    const errMsg  = data.error?.message || JSON.stringify(data);
+    showError(`API Error [HTTP ${response.status}]\nType: ${errType}\n${errMsg}`);
+    return;
+  }
 
-    aiData = parsed;
+  // Extract text block
+  const rawText = data.content?.find(b => b.type === 'text')?.text?.trim() || '';
+  if (!rawText) {
+    showError('API returned an empty response. Try a clearer image.');
+    return;
+  }
 
-    // Show extracted text
-    document.getElementById('extractedText').textContent = parsed.raw || JSON.stringify(parsed, null, 2);
-    document.getElementById('aiResult').style.display = 'block';
+  // Parse JSON — strip accidental markdown fences
+  let parsed;
+  try {
+    const clean = rawText.replace(/^```[\w]*\n?/,'').replace(/\n?```$/,'').trim();
+    parsed = JSON.parse(clean);
+  } catch {
+    // Couldn't parse JSON — still show raw text and let user read it
+    parsed = { raw: rawText };
+    toast('Extracted text (not structured) — check below', 'warn');
+  }
 
-    // Auto-fill immediately
-    autoFill();
-    toast('AI extraction complete ✦', 'success');
+  aiData = parsed;
+  textBox.style.color = '';
+  textBox.textContent = parsed.raw || JSON.stringify(parsed, null, 2);
+  resultBox.style.display = 'block';
+  autoFill();
+  toast('AI extraction complete ✦', 'success');
 
-  } catch(err) {
-    console.error(err);
-    toast('AI scan failed — fill form manually', 'warn');
-    document.getElementById('extractedText').textContent = 'Could not extract data. Please fill the form manually.';
-    document.getElementById('aiResult').style.display = 'block';
-  } finally {
+  btn.disabled = false;
+  btn.innerHTML = '✦ Scan with AI';
+
+  function showError(msg) {
+    console.error('[CardVault Scan Error]', msg);
+    textBox.style.color = 'var(--red)';
+    textBox.textContent = '⚠ ' + msg;
+    resultBox.style.display = 'block';
+    toast('Scan failed — see details below', 'error');
     btn.disabled = false;
     btn.innerHTML = '✦ Scan with AI';
   }
